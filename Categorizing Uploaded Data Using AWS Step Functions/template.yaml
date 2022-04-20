@@ -1,0 +1,262 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Categorize Data Uploads Using Step Functions
+Resources:
+  TranscribeLambdaRole:
+    Type: 'AWS::IAM::Role'
+    DeletionPolicy: Delete
+    Properties:
+      RoleName: transcribe-audio-lambda-role
+      Description: Role used by Lambdas for accessing S3 and Transcribe
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/CloudWatchLogsFullAccess'
+        - 'arn:aws:iam::aws:policy/AmazonTranscribeFullAccess'
+        - 'arn:aws:iam::aws:policy/AmazonS3FullAccess'
+      Tags:
+        - Key: app
+          Value: meeting-transcriber
+
+  TriggerStepFunctionsRole:
+    Type: 'AWS::IAM::Role'
+    DeletionPolicy: Delete
+    Properties:
+      RoleName: trigger-step-functions-role
+      Description: Role used by Lambda to start a Step Function workflow
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AWSStepFunctionsFullAccess'
+        - 'arn:aws:iam::aws:policy/CloudWatchLogsFullAccess'
+      Tags:
+        - Key: app
+          Value: meeting-transcriber
+
+  MeetingAudioBucket:
+    Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Join
+        - '-'
+        - - 'meeting-audio'
+          - !Select [0, !Split [-, !Select [2, !Split [/, !Ref AWS::StackId ]]]]
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: 'true'
+        BlockPublicPolicy: 'true'
+        IgnorePublicAcls: 'true'
+        RestrictPublicBuckets: 'true'
+#      NotificationConfiguration:
+#        LambdaConfigurations:
+#          - Event: 's3:ObjectCreated:*'
+#            Filter:
+#              S3Key:
+#                Rules:
+#                  - Name: prefix
+#                    Value: upload/
+#                  - Name: suffix
+#                    Value: .mp3
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - BucketKeyEnabled: 'true'
+            ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - Key: app
+          Value: meeting-transcriber
+
+  TranscribeAudioLambda:
+    Type: 'AWS::Lambda::Function'
+    DeletionPolicy: Delete
+    Properties:
+      FunctionName: transcribe-audio-lambda
+      Runtime: python3.8
+      Handler: index.lambda_handler
+      Role: !GetAtt TranscribeLambdaRole.Arn
+      Tags:
+        - Key: app
+          Value: meeting-transcriber
+      Code:
+        ZipFile: |
+          import boto3
+          import uuid
+
+          transcribe_client = boto3.client('transcribe')
+
+          def lambda_handler(event, context):
+              #Retrieve the state information
+              step_state = event['Input']
+              s3_bucket = '' #TODO
+              s3_audio_key = '' #TODO
+
+              #Prepare the parameters needed for the Transcribe job
+              meeting_audio_URI = '' #TODO
+              jobName = '' #TODO
+              transcript_key = '' #TODO
+
+              #Start the transcription job
+              response = transcribe_client.start_transcription_job(
+                  TranscriptionJobName=jobName,
+                  LanguageCode='en-US',
+                  Media={'MediaFileUri': meeting_audio_URI},
+                  OutputBucketName=s3_bucket,
+                  OutputKey=transcript_key
+              )
+
+              #Add the transcript key and Transcribe job name to the state
+              step_state['transcript_key'] = '' #TODO
+              step_state['TranscriptionJobName'] = '' #TODO
+
+              return step_state
+
+  TriggerStepFunctionLambda:
+    Type: 'AWS::Lambda::Function'
+    DeletionPolicy: Delete
+    Properties:
+      FunctionName: run-step-functions-lambda
+      Runtime: python3.8
+      Handler: index.lambda_handler
+      Role: !GetAtt TriggerStepFunctionsRole.Arn
+      Tags:
+        - Key: app
+          Value: meeting-transcriber
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import os
+
+          stepfunctions_client = boto3.client('stepfunctions')
+
+          def lambda_handler(event, context):
+              s3event = event['Records'][0]['s3']
+
+              s3bucket = s3event['bucket']['name']
+              s3key = s3event['object']['key']
+
+              step_state = {
+                  "s3_bucket": s3bucket,
+                  "s3_audio_key": s3key
+              }
+
+              response = stepfunctions_client.start_execution(
+                  stateMachineArn=os.environ['STATEMACHINEARN'],
+                  input=json.dumps(step_state)
+              )
+              
+              return json.dumps(response, default=str)
+
+  TranscribeStatusLambda:
+    Type: 'AWS::Lambda::Function'
+    DeletionPolicy: Delete
+    Properties:
+      FunctionName: transcribe-status-lambda
+      Runtime: python3.8
+      Handler: index.lambda_handler
+      Role: !GetAtt TranscribeLambdaRole.Arn
+      Tags:
+        - Key: app
+          Value: meeting-transcriber
+      Code:
+        ZipFile: |
+          import boto3
+
+          transcribe_client = boto3.client('transcribe')
+
+          def lambda_handler(event, context):
+              #Retrieve the state information
+              step_state = event['Input']['Payload']
+              transcriptionJobName = '' #TODO
+
+              #Check the Transcribe status
+              response = transcribe_client.get_transcription_job(
+                  TranscriptionJobName=transcriptionJobName
+              )   
+
+              #Add the Transcribe job status back to the state
+              step_state['TranscriptionJobStatus'] = '' #TODO
+
+              return step_state
+
+
+  CategorizeDataLambda:
+    Type: 'AWS::Lambda::Function'
+    DeletionPolicy: Delete
+    Properties:
+      FunctionName: categorize-data-lambda
+      Runtime: python3.8
+      Handler: index.lambda_handler
+      Role: !GetAtt TranscribeLambdaRole.Arn
+      Tags:
+        - Key: app
+          Value: meeting-transcriber
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import os
+          import uuid
+          from datetime import date
+
+          s3_client = boto3.client('s3')
+
+          def lambda_handler(event, context):
+              #Retrieve the state information
+              step_state = '' #TODO
+
+              #Get the S3 information for the audio file and transcript
+              s3_bucket = '' #TODO
+              s3_audio_key = '' #TODO
+              s3_transcript_key = '' #TODO
+
+              base_audio_key = os.path.basename(s3_audio_key)
+              base_transcript_key = os.path.basename(s3_transcript_key)
+
+              #Retrieve the transcript from S3
+              download_path = f'/tmp/{base_transcript_key}-{uuid.uuid4()}'
+              s3_client.download_file(s3_bucket, s3_transcript_key, download_path)
+              with open(download_path,'r') as local_transcript:
+                  transcribe_result = json.loads(local_transcript.read())
+              transcripts = transcribe_result['results']['transcripts']
+
+              #Test if the transcript contains any of our special words.
+              keywords = os.getenv('KEYWORDS').split(',')
+              contains_keyword = False
+              for transcript_obj in transcripts:
+                  for keyword in keywords:
+                      if keyword in transcript_obj['transcript']:
+                          contains_keyword = True
+                          break
+                  if contains_keyword:
+                      break
+
+              #Set file destination location.
+              #By default, they should be placed in the processed/ folder.
+              #If any of the keywords were found, move them to the important/ folder instead.
+              #Date should be in YYYY/MM/DD format.
+              output_date = '' #TODO
+              output_folder = '' #TODO
+
+              output_loc = f'{output_folder}/{output_date}'
+
+              #Move the audio and transcript. This requires a copy then a delete.
+              #s3_client.copy_object #TODO
+              #s3_client.delete_objects #TODO
+
+              #Add the output folder to the state
+              step_state['output_folder'] = output_folder
+
+              return step_state

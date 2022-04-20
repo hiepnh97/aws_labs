@@ -1,0 +1,393 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Building Microservice and Data Model",
+    "Resources": {
+        "CollectorsSiteBucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "BucketName": {
+                    "Fn::Join": [
+                        "-",
+                        [
+                            "collectors",
+                            {
+                                "Ref": "AWS::AccountId"
+                            }
+                        ]
+                    ]
+                },
+                "AccessControl": "PublicRead",
+                "WebsiteConfiguration": {
+                    "IndexDocument": "index.html"
+                }
+            }
+        },
+        "CollectorsSiteBucketPolicy": {
+            "Type": "AWS::S3::BucketPolicy",
+            "Properties": {
+                "Bucket": {"Ref": "CollectorsSiteBucket"},
+                "PolicyDocument": {
+                    "Statement":[
+                      {
+                        "Sid":"PublicRead",
+                        "Effect":"Allow",
+                        "Principal": "*",
+                        "Action":["s3:GetObject"],
+                        "Resource":[{"Fn::Join":[ "", [{"Fn::GetAtt": [
+                            "CollectorsSiteBucket",
+                            "Arn"
+                        ]}, "/*"]]}]
+                      }
+                    ]
+                  }
+            }
+        },
+        "CopyIndex": {
+            "Type": "Custom::CopyIndex",
+            "Properties": {
+                "ServiceToken": {
+                    "Fn::GetAtt": [
+                        "CopyIndexFunction",
+                        "Arn"
+                    ]
+                },
+                "DestBucket": {
+                    "Ref": "CollectorsSiteBucket"
+                },
+                "SourceBucket": "dynamodblabs",
+                "APIGatewayURL": {
+                    "Fn::Sub": "https://${CollectorsAPI}.execute-api.${AWS::Region}.amazonaws.com"
+                },
+                "Objects": [
+                    "collectors/index.template"
+                ]
+            },
+            "DependsOn": ["CollectorsSiteBucket"]
+        },
+        "CopyIndexRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": "lambda.amazonaws.com"
+                            },
+                            "Action": "sts:AssumeRole"
+                        }
+                    ]
+                },
+                "ManagedPolicyArns": [
+                    "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+                ],
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "lambda-copier",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "s3:*"
+                                    ],
+                                    "Resource": [
+                                        {
+                                            "Fn::Sub": "arn:aws:s3:::*"
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "CopyIndexFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "Description": "Copies index.html from source bucket, modifies API Gateway Placeholder to URL from stack.",
+                "Handler": "lambda_function.handler",
+                "Runtime": "python3.7",
+                "Role": {
+                    "Fn::GetAtt": [
+                        "CopyIndexRole",
+                        "Arn"
+                    ]
+                },
+                "Timeout": 240,
+                "Code": {
+                    "S3Bucket": "dynamodblabs",
+                    "S3Key": "collectors/collectors_index_provisioner.zip"
+                },
+                "FunctionName": "collectors-index-provisioner"
+            }
+        },
+        "LambdaDDBreadwrite": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": "lambda.amazonaws.com"
+                            },
+                            "Action": "sts:AssumeRole"
+                        }
+                    ]
+                },
+                "ManagedPolicyArns": [
+                    "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+                    "arn:aws:iam::aws:policy/service-role/AWSLambdaDynamoDBExecutionRole",
+                    "arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess",
+                    "arn:aws:iam::aws:policy/AWSLambda_ReadOnlyAccess",
+                    "arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess"
+                ]
+            }
+        },
+        "DDBReadWrite": {
+            "Type": "AWS::IAM::Policy",
+            "Properties": {
+                "PolicyName": "DDBReadWrite",
+                "Roles": [
+                    {
+                        "Ref": "LambdaDDBreadwrite"
+                    }
+                ],
+                "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Action": [
+                                "dynamodb:*",
+                                "dax:*",
+                                "ec2:DescribeVpcs",
+                                "ec2:DescribeSubnets",
+                                "ec2:DescribeSecurityGroups",
+                                "iam:GetRole",
+                                "iam:ListRoles",
+                                "sns:ListSubscriptionsByTopic",
+                                "sns:ListTopics",
+                                "lambda:ListFunctions",
+                                "lambda:ListEventSourceMappings",
+                                "lambda:GetFunctionConfiguration",
+                                "resource-groups:ListGroups",
+                                "resource-groups:ListGroupResources",
+                                "resource-groups:GetGroup",
+                                "resource-groups:GetGroupQuery",
+                                "tag:GetResources",
+                                "ec2:CreateNetworkInterface",
+                                "ec2:DescribeNetworkInterfaces",
+                                "ec2:DeleteNetworkInterface"
+                            ],
+                            "Effect": "Allow",
+                            "Resource": "*"
+                        }
+                    ]
+                }
+            }
+        },
+        "CollectorsPrimaryFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "Handler": "function.handler",
+                "Role": {
+                    "Fn::GetAtt": [
+                        "LambdaDDBreadwrite",
+                        "Arn"
+                    ]
+                },
+                "Code": {
+                    "S3Bucket": "dynamodblabs",
+                    "S3Key": "collectors/function.zip"
+                },
+                "Runtime": "python3.8",
+                "Timeout": 60,
+                "FunctionName": "collectors_primary"
+            }
+        },
+        "APIGatewayPrimaryLambdaPerm": {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+                "FunctionName": {
+                    "Fn::GetAtt": [
+                        "CollectorsPrimaryFunction",
+                        "Arn"
+                    ]
+                },
+                "Action": "lambda:InvokeFunction",
+                "Principal": "apigateway.amazonaws.com"
+            }
+        },
+        "CollectorsLoadFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "Handler": "tableload.handler",
+                "Role": {
+                    "Fn::GetAtt": [
+                        "LambdaDDBreadwrite",
+                        "Arn"
+                    ]
+                },
+                "Code": {
+                    "S3Bucket": "dynamodblabs",
+                    "S3Key": "collectors/tableload.zip"
+                },
+                "Runtime": "python3.8",
+                "Timeout": 60,
+                "FunctionName": "collectors_load"
+            }
+        },
+        "CollectorsAPI": {
+            "Type": "AWS::ApiGateway::RestApi",
+            "Properties": {
+                "Name": "Capstone API",
+                "EndpointConfiguration": {
+                    "Types": ["REGIONAL"]
+                }
+            }
+        },
+        "CollectorsAPIResource": {
+            "Type": "AWS::ApiGateway::Resource",
+            "Properties": {
+                "ParentId": {
+                    "Fn::GetAtt": [
+                        "CollectorsAPI",
+                        "RootResourceId"
+                    ]
+                },
+                "PathPart": "prod",
+                "RestApiId": {
+                    "Ref": "CollectorsAPI"
+                }
+            }
+        },
+        "PrimaryAPIMethod": {
+            "Type": "AWS::ApiGateway::Method",
+            "Properties": {
+                "RestApiId": {
+                    "Ref": "CollectorsAPI"
+                },
+                "ResourceId": {
+                    "Ref": "CollectorsAPIResource"
+                },
+                "HttpMethod": "ANY",
+                "AuthorizationType": "NONE",
+                "Integration": {
+                    "Type": "AWS_PROXY",
+                    "IntegrationHttpMethod": "POST",
+                    "Uri": {
+                        "Fn::Join": [
+                            "",
+                            [
+                                "arn:aws:apigateway:",
+                                {
+                                    "Ref": "AWS::Region"
+                                },
+                                ":lambda:path/2015-03-31/functions/",
+                                {
+                                    "Fn::GetAtt": [
+                                        "CollectorsPrimaryFunction",
+                                        "Arn"
+                                    ]
+                                },
+                                "/invocations"
+                            ]
+                        ]
+                    },
+                    "IntegrationResponses": [
+                        {
+                            "ResponseParameters": {
+                                "method.response.header.Access-Control-Allow-Origin": "'*'"
+                            },
+                            "StatusCode": 200
+                        }
+                    ],
+                    "PassthroughBehavior": "WHEN_NO_MATCH"
+                },
+                "MethodResponses": [
+                    {
+                        "ResponseParameters": {
+                            "method.response.header.Access-Control-Allow-Origin": false
+                        },
+                        "StatusCode": 200
+                    }
+                ]
+            }
+        },
+        "CollectorsPrimaryCORS": {
+            "Type": "AWS::ApiGateway::Method",
+            "Properties": {
+                "AuthorizationType": "NONE",
+                "RestApiId": {
+                    "Ref": "CollectorsAPI"
+                },
+                "ResourceId": {
+                    "Ref": "CollectorsAPIResource"
+                },
+                "HttpMethod": "OPTIONS",
+                "Integration": {
+                    "IntegrationResponses": [
+                        {
+                            "StatusCode": 200,
+                            "ResponseParameters": {
+                                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                                "method.response.header.Access-Control-Allow-Methods": "'POST,OPTIONS'",
+                                "method.response.header.Access-Control-Allow-Origin": "'*'"
+                            },
+                            "ResponseTemplates": {
+                                "application/json": ""
+                            }
+                        }
+                    ],
+                    "PassthroughBehavior": "WHEN_NO_MATCH",
+                    "RequestTemplates": {
+                        "application/json": "{\"statusCode\": 200}"
+                    },
+                    "Type": "MOCK"
+                },
+                "MethodResponses": [
+                    {
+                        "StatusCode": 200,
+                        "ResponseModels": {
+                            "application/json": "Empty"
+                        },
+                        "ResponseParameters": {
+                            "method.response.header.Access-Control-Allow-Headers": false,
+                            "method.response.header.Access-Control-Allow-Methods": false,
+                            "method.response.header.Access-Control-Allow-Origin": false
+                        }
+                    }
+                ]
+            }
+        },
+        "CollectorsDeployment": {
+            "Type": "AWS::ApiGateway::Deployment",
+            "Properties": {
+                "RestApiId": {
+                    "Ref": "CollectorsAPI"
+                },
+                "StageName": "primary"
+            },
+            "DependsOn": [
+                "PrimaryAPIMethod",
+                "CollectorsAPIResource",
+                "CollectorsAPI",
+                "CollectorsPrimaryFunction"
+            ]
+        }
+    },
+    "Outputs": {
+        "pubIpAddress1": {
+            "Description": "Collectors User Profile URL",
+            "Value": {
+                "Fn::GetAtt" : [ "CollectorsSiteBucket", "WebsiteURL" ]
+            }
+        }
+    }
+}

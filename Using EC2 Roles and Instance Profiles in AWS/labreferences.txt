@@ -1,0 +1,19 @@
+
+Dev s3 bucket name = cfst-3035-65876140a8843fe97b908912fc4-s3bucketdev-1gdfyv0f6ladf
+
+Prod s3 bucket name = cfst-3035-65876140a8843fe97b908912fc-s3bucketprod-yk0c9w126scz
+
+Engineering s3 bucket name = cfst-3035-65876140a8843fe97b9-s3bucketengineering-1jogl3cvy7zj1
+
+Secret s3 bucket name = cfst-3035-65876140a8843fe97b908912-s3bucketsecret-1w72pmnwgz84t
+
+================
+
+"Arn": "arn:aws:iam::600462650072:policy/DevS3ReadAccess",
+
+Instance ID of Web Server: i-036b83fd166564167
+
+Web Server S3 Bucket Dev: cfst-3035-65876140a8843fe97b908912fc4-s3bucketdev-1gdfyv0f6ladf
+
+Web Server S3 Bucket Prod: 
+cfst-3035-65876140a8843fe97b908912fc-s3bucketprod-yk0c9w126scz

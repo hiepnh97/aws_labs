@@ -1,0 +1,22 @@
+- Create Bucket on AWS S3
+	- Un selected block access from internet
+- Go to properties of bucket
+	- Enable Static website hosting
+- Make public all files which you want public
+	- Go to Bucket -> Permission -> Bucket Policy
+	- Patse the statement below and save:
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "PublicReadGetObject",
+            "Effect": "Allow",
+            "Principal": "*",
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::my-static-web-1997/*"
+        }
+    ]
+}
+
+- Check with Bucket website endpoint
+- Enjoyed

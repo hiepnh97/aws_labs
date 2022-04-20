@@ -1,0 +1,100 @@
+{
+    "StartAt": "Start Transcribe",
+    "States": {
+      "Start Transcribe": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::lambda:invoke",
+        "Parameters": {
+          "FunctionName": "arn:aws:lambda:us-east-1:070791569563:function:start-transcribe-lambda:$LATEST",
+          "Payload": {
+            "Input.$": "$"
+          }
+        },
+        "Next": "Wait for Transcribe"
+      },
+      "Wait for Transcribe": {
+        "Type": "Wait",
+        "Seconds": 45,
+        "Next": "Check Transcribe Status"
+      },
+      "Check Transcribe Status": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::lambda:invoke",
+        "Parameters": {
+          "FunctionName": "arn:aws:lambda:us-east-1:070791569563:function:transcribe-status-lambda:$LATEST",
+          "Payload": {
+            "Input.$": "$"
+          }
+        },
+        "Next": "Is Transcribe Complete"
+      },
+      "Is Transcribe Complete": {
+        "Type": "Choice",
+        "Choices": [
+          {
+            "Variable": "$.Payload.TranscriptionJobStatus",
+            "StringEquals": "COMPLETED",
+            "Next": "Transcript Available"
+          },
+          {
+            "Variable": "$.Payload.TranscriptionJobStatus",
+            "StringEquals": "FAILED",
+            "Next": "Transcribe Failed"
+          }
+        ],
+        "Default": "Wait for Transcribe"
+      },
+      "Transcript Available": {
+        "Type": "Parallel",
+        "Branches": [
+          {
+            "StartAt": "Translate Text",
+            "States": {
+              "Translate Text": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::lambda:invoke",
+                "Parameters": {
+                  "FunctionName": "arn:aws:lambda:us-east-1:070791569563:function:translate-lambda:$LATEST",
+                  "Payload": {
+                    "Input.$": "$"
+                  }
+                },
+                "End": true
+              }
+            }
+          },
+          {
+            "StartAt": "Comprehend Sentiment",
+            "States": {
+              "Comprehend Sentiment": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::lambda:invoke",
+                "Parameters": {
+                  "FunctionName": "arn:aws:lambda:us-east-1:070791569563:function:comprehend-sentiment-lambda:$LATEST",
+                  "Payload": {
+                    "Input.$": "$"
+                  }
+                },
+                "End": true
+              }
+            }
+          }
+        ],
+        "Next": "Convert Text to Speech"
+      },
+      "Convert Text to Speech": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::lambda:invoke",
+        "Parameters": {
+          "FunctionName": "arn:aws:lambda:us-east-1:070791569563:function:start-polly-lambda:$LATEST",
+          "Payload": {
+            "Input.$": "$"
+          }
+        },
+        "End": true
+      },
+      "Transcribe Failed": {
+        "Type": "Fail"
+      }
+    }
+  }
