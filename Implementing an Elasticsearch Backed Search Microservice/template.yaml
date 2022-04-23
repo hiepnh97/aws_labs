@@ -1,0 +1,187 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Elasticsearch Microservice
+Resources:
+#Elasticsearch Cluster
+  ElasticsearchDomain:
+    Type: "AWS::Elasticsearch::Domain"
+    Properties:
+        DomainName: "frankensearch"
+        ElasticsearchVersion: "7.9"
+        ElasticsearchClusterConfig: 
+            DedicatedMasterEnabled: false
+            InstanceCount: 2
+            InstanceType: "t3.medium.elasticsearch"
+            ZoneAwarenessEnabled: false
+            WarmEnabled: false
+        AccessPolicies: !Sub "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"*\"},\"Action\":\"es:*\",\"Resource\":\"*\"}]}"
+        EncryptionAtRestOptions: 
+            Enabled: true
+        NodeToNodeEncryptionOptions: 
+            Enabled: true
+        AdvancedOptions: 
+            "rest.action.multi.allow_explicit_index": "true"
+        EBSOptions: 
+            EBSEnabled: true
+            VolumeType: "gp2"
+            VolumeSize: 10
+        DomainEndpointOptions: 
+            EnforceHTTPS: true
+            TLSSecurityPolicy: "Policy-Min-TLS-1-0-2019-07"
+            CustomEndpointEnabled: false
+        AdvancedSecurityOptions: 
+            Enabled: true
+            InternalUserDatabaseEnabled: true
+            MasterUserOptions:
+              MasterUserName: "cloud_user"
+              MasterUserPassword: "Strongpass1!"
+
+#Cluster data to ES domain ^
+  ESCopyData:
+    Type: Custom::ESCopyData
+    Properties:
+      ServiceToken: !GetAtt 'ESCopyFunction.Arn'
+      EsEndpoint: !GetAtt 'ElasticsearchDomain.DomainEndpoint'
+      ClusterUser: cloud_user
+      ClusterPasword: Strongpass1!
+    DependsOn:
+      - ElasticsearchDomain
+
+  CopyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CopyRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Path: /
+
+  ESCopyFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Loads Frankenstein into ES Domain
+      Handler: function.handler
+      Runtime: python3.8
+      Role: !GetAtt 'CopyRole.Arn'
+      Timeout: 240
+      Code:
+        S3Bucket: das-c01-data-analytics-specialty
+        S3Key: Labs/implementing-elasticsearch-microservice/frankenload.zip
+      FunctionName: FrankenLoader
+
+# Frankenwords Site
+  FrankenSiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Join
+        - '-'
+        - - franken-search
+          - !Ref 'AWS::AccountId'
+      AccessControl: PublicRead
+      WebsiteConfiguration:
+        IndexDocument: index.html
+   
+  FrankenSiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref 'FrankenSiteBucket'
+      PolicyDocument:
+        Statement:
+          - Sid: PublicRead
+            Effect: Allow
+            Principal: '*'
+            Action:
+              - s3:GetObject
+            Resource:
+              - !Join
+                - ''
+                - - !GetAtt 'FrankenSiteBucket.Arn'
+                  - /*
+  
+  CopyFrankensite:
+    Type: Custom::CopyFrankensite
+    Properties:
+      ServiceToken: !GetAtt 'CopyFunction.Arn'
+      DestBucket: !Ref 'FrankenSiteBucket'
+      SourceBucket: das-c01-data-analytics-specialty
+      APIGatewayURL: !Sub 'https://${FrankenAPI}.execute-api.${AWS::Region}.amazonaws.com'
+      Objects:
+        - Labs/implementing-elasticsearch-microservice/web/index.html
+        - Labs/implementing-elasticsearch-microservice/web/frankenwords.css
+        - Labs/implementing-elasticsearch-microservice/web/frankenwords.js
+        - Labs/implementing-elasticsearch-microservice/web/frankenstein.png
+    DependsOn:
+      - FrankenSiteBucket
+      - FrankenAPI
+
+  CopyFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Copies objects from source bucket, modifies API Gateway Placeholder
+        to URL from stack.
+      Handler: lambda_function.handler
+      Runtime: python3.7
+      Role: !GetAtt 'CopyRole.Arn'
+      Timeout: 240
+      Code:
+        S3Bucket: das-c01-data-analytics-specialty
+        S3Key: Labs/programmatically-utilizing-s3-select/provisioning.zip
+      FunctionName: frankenwords-provisioner
+
+# Frankenwords Function
+  FrankenFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: function.handler
+      Role: !GetAtt 'FrankenRole.Arn'
+      Code:
+        S3Bucket: das-c01-data-analytics-specialty
+        S3Key: Labs/implementing-elasticsearch-microservice/lambda/function.zip
+      Runtime: python3.8
+      Timeout: 60
+      FunctionName: Franken_Search
+
+  FrankenRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: FrankenRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Path: /
+
+# FrankenAPI Gateway
+  APIGatewayFrankenLambdaPerm:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt 'FrankenFunction.Arn'
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+
+  FrankenAPI:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: Franken API
+      ProtocolType: HTTP
+      Target: !GetAtt 'FrankenFunction.Arn'
+
+Outputs:
+  pubIpAddress1:
+    Description: Frankenwords site URL
+    Value: !GetAtt 'FrankenSiteBucket.WebsiteURL'
+
+  pubIpAddress2:
+    Description: Frankensearch Elasticsearch Domain Endpoint
+    Value: !GetAtt 'ElasticsearchDomain.DomainEndpoint'

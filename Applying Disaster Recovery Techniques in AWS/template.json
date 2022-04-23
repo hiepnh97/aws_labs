@@ -1,0 +1,212 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "AWS SysOps Admin Course: CloudFormation Lab",
+    "Parameters": {
+        "S3ContentsURL": {
+            "Type": "String",
+            "Default": "https://github.com/ACloudGuru-Resources/acg-ops-course-updates/raw/main/aws/Applying-Disaster-Recovery-Techniques-in-AWS/Archive.zip",
+            "Description": "Unpack contents of this archive to the S3 Bucket"
+        }
+    },
+    "Resources": {
+        "S3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {}
+        },
+        "RoleLambdaS3TextFileCreator": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "ManagedPolicyArns": [
+                    {
+                        "Ref": "PolicyManagedLambdaS3TextFileCreator"
+                    }
+                ],
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path": "/"
+            }
+        },
+        "PolicyManagedLambdaS3TextFileCreator": {
+            "Type": "AWS::IAM::ManagedPolicy",
+            "Properties": {
+                "ManagedPolicyName": {
+                    "Fn::Join": [
+                        "-",
+                        [
+                            {
+                                "Ref": "AWS::StackName"
+                            },
+                            "PolicyManagedLambdaS3TextFileCreator"
+                        ]
+                    ]
+                },
+                "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                                "s3:ListAllMyBuckets",
+                                "s3:GetBucketLocation"
+                            ],
+                            "Resource": [
+                                "arn:aws:s3:::*"
+                            ]
+                        },
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                                "s3:*"
+                            ],
+                            "Resource": [
+                                {
+                                    "Fn::GetAtt": [
+                                        "S3Bucket",
+                                        "Arn"
+                                    ]
+                                },
+                                {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            {
+                                                "Fn::GetAtt": [
+                                                    "S3Bucket",
+                                                    "Arn"
+                                                ]
+                                            },
+                                            "/*"
+                                        ]
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                                "logs:*"
+                            ],
+                            "Resource": [
+                                "arn:aws:logs:*:*:*"
+                            ]
+                        }
+                    ]
+                }
+            }
+        },
+        "LambdaLookupFileCreator": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "Description": "Generate text lookup file in lab s3 bucket.",
+                "Handler": "index.lambda_handler",
+                "Role": {
+                    "Fn::GetAtt": [
+                        "RoleLambdaS3TextFileCreator",
+                        "Arn"
+                    ]
+                },
+                "Runtime": "python3.7",
+                "Timeout": 60,
+                "Code": {
+                    "ZipFile": {
+                        "Fn::Join": [
+                            "\n",
+                            [
+                                "import cfnresponse;",
+                                "import json;",
+                                "import boto3;",
+                                "import os;",
+                                "import glob;",
+                                "import urllib.request;",
+                                "import zipfile;",
+                                "import tempfile;",
+                                "import mimetypes;",
+                                "",
+                                "def lambda_handler(event, context):",
+                                "",
+                                "    responseData = {};",
+                                "",
+                                "    try:",
+                                {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "        bucket = '",
+                                            {
+                                                "Ref": "S3Bucket"
+                                            },
+                                            "'"
+                                        ]
+                                    ]
+                                },
+                                {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "        archive = '",
+                                            {
+                                                "Ref": "S3ContentsURL"
+                                            },
+                                            "'"
+                                        ]
+                                    ]
+                                },
+                                "        client = boto3.client('s3');",
+                                "        temppath = tempfile.gettempdir()",
+                                "        urllib.request.urlretrieve(archive, '/tmp/archive.zip')",
+                                "        zipdata = zipfile.ZipFile('/tmp/archive.zip')",
+                                "        zipdata.extractall('/tmp/s3site/')",
+                                "        # unzipped the archive to /tmp/s3site",
+                                "        print(glob.glob('/tmp/s3site/*.*'))",
+                                "        for root,dirs,files in os.walk('/tmp/s3site/'):",
+                                "          for file in files:",
+                                "            client.upload_file(os.path.join(root,file),bucket,file,ExtraArgs={'ACL':'public-read'})",
+                                "        print('Populated s3://' + bucket);",
+                                "        responseData['bucket'] = bucket;",
+                                "",
+                                "        cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData );",
+                                "        print('Successfully populated S3 bucket.');",
+                                "",
+                                "    except Exception as e:",
+                                "        print('### Error uploading files: ');",
+                                "        print(e);",
+                                "        cfnresponse.send(event, context, cfnresponse.FAILED, responseData );"
+                            ]
+                        ]
+                    }
+                }
+            }
+        },
+        "DownloadFileCustomResource": {
+            "DependsOn": [
+                "LambdaLookupFileCreator"
+            ],
+            "Type": "Custom::DownloadFile",
+            "Properties": {
+                "ServiceToken": {
+                    "Fn::GetAtt": [
+                        "LambdaLookupFileCreator",
+                        "Arn"
+                    ]
+                },
+                "BucketName": {
+                    "Ref": "S3Bucket"
+                }
+            }
+        }
+    }
+}
